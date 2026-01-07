@@ -1,0 +1,59 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="CheatUI.MainWindow"
+        Title="Radmir RP Cheat"
+        Width="450" Height="600"
+        Background="#1E1E2E">
+
+	<StackPanel Margin="20" Spacing="15">
+
+		<!-- Заголовок -->
+		<TextBlock Text="🔧 RADMIR RP CHEAT"
+                   FontSize="20"
+                   FontWeight="Bold"
+                   Foreground="White"
+                   HorizontalAlignment="Center"/>
+
+		<!-- Кнопка инъекции -->
+		<Button x:Name="InjectButton"
+                Content="⚡ INJECT"
+                Height="45"
+                Background="#0078D7"
+                Foreground="White"
+                FontSize="14"
+                FontWeight="Bold"/>
+
+		<!-- Статус -->
+		<Border Background="#252526"
+                CornerRadius="5"
+                Padding="10">
+			<TextBlock x:Name="StatusText"
+                       Text="Status: Ready"
+                       Foreground="LightGray"/>
+		</Border>
+
+		<!-- Процесс -->
+		<StackPanel Spacing="5">
+			<TextBlock Text="Target Process:" Foreground="White"/>
+			<ComboBox x:Name="ProcessComboBox"
+                      SelectedIndex="0">
+				<ComboBoxItem>gta_sa.exe</ComboBoxItem>
+				<ComboBoxItem>samp.exe</ComboBoxItem>
+			</ComboBox>
+		</StackPanel>
+
+		<!-- Лог -->
+		<Border Background="#252526"
+                CornerRadius="5"
+                Padding="10"
+                Height="150">
+			<ScrollViewer>
+				<TextBlock x:Name="LogText"
+                           Text="Log will appear here..."
+                           Foreground="LightGray"/>
+			</ScrollViewer>
+		</Border>
+
+	</StackPanel>
+
+</Window>

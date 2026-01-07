@@ -1,0 +1,2 @@
+﻿#define CHEATCORE_API __declspec(dllexport)
+#define CHEATCORE_API __declspec(dllimport)
