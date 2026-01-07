@@ -14,7 +14,6 @@ class Program
             .UsePlatformDetect()
             .With(new Win32PlatformOptions
             {
-                // Это решает проблему черного экрана в 90% случаев
                 RenderingMode = new[] { Win32RenderingMode.Software }
             })
             .LogToTrace();

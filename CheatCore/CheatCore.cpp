@@ -2,15 +2,12 @@
 #include <Windows.h>
 
 DWORD WINAPI MainThread(LPVOID lpParam) {
-    // Проверка наличия SAMP (если нужно)
     while (GetModuleHandleA("samp.dll") == NULL) Sleep(500);
 
-    // Твой функционал здесь
-    // Пример: сообщение при успешном инжекте
     MessageBoxA(NULL, "Cheat Core Active!", "Success", MB_OK | MB_ICONINFORMATION);
 
     while (true) {
-        if (GetAsyncKeyState(VK_DELETE) & 0x8000) break; // Выход на кнопку Delete
+        if (GetAsyncKeyState(VK_DELETE) & 0x8000) break;
         Sleep(100);
     }
 
