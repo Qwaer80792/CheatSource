@@ -6,15 +6,22 @@
 		<BuiltInComInteropSupport>true</BuiltInComInteropSupport>
 		<ApplicationManifest>app.manifest</ApplicationManifest>
 		<AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+		<Platforms>x86</Platforms>
+		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 	</PropertyGroup>
 
 	<ItemGroup>
-		<PackageReference Include="Avalonia" Version="11.3.10" />
-		<PackageReference Include="Avalonia.Desktop" Version="11.3.10" />
-		<PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.10" />
-		<PackageReference Include="Avalonia.ReactiveUI" Version="11.3.9" />
-		<PackageReference Include="Avalonia.Fonts.Inter" Version="11.3.10" />
-		<PackageReference Include="Avalonia.Markup.Xaml.Loader" Version="11.3.10" />
+		<PackageReference Include="Avalonia" Version="11.1.3" />
+		<PackageReference Include="Avalonia.Desktop" Version="11.1.3" />
+		<PackageReference Include="Avalonia.Themes.Fluent" Version="11.1.3" />
+		<PackageReference Include="Avalonia.ReactiveUI" Version="11.1.3" />
+		<PackageReference Include="Avalonia.Fonts.Inter" Version="11.1.3" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<None Update="app.manifest">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
 	</ItemGroup>
 
 	<ItemGroup>

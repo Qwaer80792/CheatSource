@@ -1,22 +1,23 @@
 ﻿using Avalonia;
 using Avalonia.Controls;
-using Avalonia.Markup.Xaml;
+using Avalonia.Threading;
 using System;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading.Tasks;
 
 namespace CheatUI;
 
 public partial class MainWindow : Window
 {
-    // WinAPI импорты для инъекции
-    [DllImport("kernel32.dll", SetLastError = true)]
+    // Используем W-версии функций (Unicode) для корректной работы с путями
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     static extern IntPtr OpenProcess(uint dwDesiredAccess, bool bInheritHandle, int dwProcessId);
 
-    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Auto)]
-    static extern IntPtr GetModuleHandle(string lpModuleName);
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    static extern IntPtr GetModuleHandleW(string lpModuleName);
 
     [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Ansi)]
     static extern IntPtr GetProcAddress(IntPtr hModule, string lpProcName);
@@ -31,7 +32,10 @@ public partial class MainWindow : Window
     static extern IntPtr CreateRemoteThread(IntPtr hProcess, IntPtr lpThreadAttributes, uint dwStackSize, IntPtr lpStartAddress, IntPtr lpParameter, uint dwCreationFlags, IntPtr lpThreadId);
 
     [DllImport("kernel32.dll", SetLastError = true)]
-    static extern uint WaitForSingleObject(IntPtr hHandle, uint dwMilliseconds);
+    static extern bool GetExitCodeThread(IntPtr hThread, out uint lpExitCode);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool CloseHandle(IntPtr hObject);
 
     const uint PROCESS_ALL_ACCESS = 0x1F0FFF;
     const uint MEM_COMMIT = 0x1000;
@@ -44,163 +48,80 @@ public partial class MainWindow : Window
         SetupEventHandlers();
     }
 
-    private void InitializeComponent()
-    {
-        AvaloniaXamlLoader.Load(this);
-    }
-
     private void SetupEventHandlers()
     {
         var injectButton = this.FindControl<Button>("InjectButton");
-        var statusText = this.FindControl<TextBlock>("StatusText");
-        var logText = this.FindControl<TextBlock>("LogText");
-
         if (injectButton != null)
         {
-            injectButton.Click += async (s, e) =>
-            {
-                try
-                {
-                    AddLog("Starting injection...");
-                    statusText.Text = "Status: Injecting...";
-
-                    string targetProcess = "gta_sa";
-                    string dllPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "InternalLoader.dll");
-
-                    if (!File.Exists(dllPath))
-                    {
-                        AddLog($"ERROR: DLL not found at {dllPath}");
-                        statusText.Text = "Status: ❌ DLL not found!";
-                        return;
-                    }
-
-                    bool success = InjectDLL(targetProcess, dllPath);
-
-                    if (success)
-                    {
-                        AddLog("✅ Injection successful!");
-                        statusText.Text = "Status: ✅ Injected!";
-                    }
-                    else
-                    {
-                        AddLog("❌ Injection failed!");
-                        statusText.Text = "Status: ❌ Failed!";
-                    }
-                }
-                catch (Exception ex)
-                {
-                    AddLog($"ERROR: {ex.Message}");
-                    statusText.Text = "Status: ❌ Error!";
-                }
+            injectButton.Click += async (s, e) => {
+                injectButton.IsEnabled = false;
+                await Task.Run(() => InjectLogic());
+                injectButton.IsEnabled = true;
             };
         }
     }
 
-    private bool InjectDLL(string processName, string dllPath)
+    private void InjectLogic()
     {
-        try
+        string processName = "gta_sa";
+        string dllName = "InternalLoader.dll";
+
+        // 1. Получаем абсолютный путь и проверяем его
+        string fullPath = Path.GetFullPath(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, dllName));
+
+        UpdateLog($"[.] Target: {processName}.exe");
+        UpdateLog($"[.] DLL Path: {fullPath}");
+
+        Process[] processes = Process.GetProcessesByName(processName);
+        if (processes.Length == 0)
         {
-            AddLog($"Looking for process: {processName}");
-
-            // Ищем процесс GTA
-            Process[] processes = Process.GetProcessesByName(processName);
-            if (processes.Length == 0)
-            {
-                AddLog($"Process {processName} not found!");
-                return false;
-            }
-
-            Process targetProcess = processes[0];
-            AddLog($"Found process: {targetProcess.ProcessName} (PID: {targetProcess.Id})");
-
-            // Открываем процесс
-            IntPtr hProcess = OpenProcess(PROCESS_ALL_ACCESS, false, targetProcess.Id);
-            if (hProcess == IntPtr.Zero)
-            {
-                AddLog($"Failed to open process. Error: {Marshal.GetLastWin32Error()}");
-                return false;
-            }
-
-            AddLog("Process opened successfully");
-
-            // Выделяем память в процессе
-            IntPtr allocatedMem = VirtualAllocEx(hProcess, IntPtr.Zero,
-                (uint)(dllPath.Length + 1), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-
-            if (allocatedMem == IntPtr.Zero)
-            {
-                AddLog($"Failed to allocate memory. Error: {Marshal.GetLastWin32Error()}");
-                CloseHandle(hProcess);
-                return false;
-            }
-
-            AddLog($"Memory allocated at: 0x{allocatedMem:X}");
-
-            // Пишем путь к DLL в память
-            byte[] dllPathBytes = Encoding.ASCII.GetBytes(dllPath);
-            bool writeResult = WriteProcessMemory(hProcess, allocatedMem, dllPathBytes,
-                (uint)dllPathBytes.Length, out _);
-
-            if (!writeResult)
-            {
-                AddLog($"Failed to write memory. Error: {Marshal.GetLastWin32Error()}");
-                VirtualFreeEx(hProcess, allocatedMem, 0, 0x8000); // MEM_RELEASE
-                CloseHandle(hProcess);
-                return false;
-            }
-
-            AddLog("DLL path written to memory");
-
-            // Получаем адрес LoadLibraryA
-            IntPtr kernel32 = GetModuleHandle("kernel32.dll");
-            IntPtr loadLibraryAddr = GetProcAddress(kernel32, "LoadLibraryA");
-
-            AddLog($"LoadLibraryA address: 0x{loadLibraryAddr:X}");
-
-            // Создаём удалённый поток
-            IntPtr hThread = CreateRemoteThread(hProcess, IntPtr.Zero, 0,
-                loadLibraryAddr, allocatedMem, 0, IntPtr.Zero);
-
-            if (hThread == IntPtr.Zero)
-            {
-                AddLog($"Failed to create thread. Error: {Marshal.GetLastWin32Error()}");
-                VirtualFreeEx(hProcess, allocatedMem, 0, 0x8000);
-                CloseHandle(hProcess);
-                return false;
-            }
-
-            AddLog("Remote thread created");
-
-            // Ждём завершения
-            WaitForSingleObject(hThread, 5000);
-
-            // Закрываем дескрипторы
-            CloseHandle(hThread);
-            VirtualFreeEx(hProcess, allocatedMem, 0, 0x8000);
-            CloseHandle(hProcess);
-
-            AddLog("Injection completed");
-            return true;
+            UpdateLog("[-] Error: Process not found!");
+            return;
         }
-        catch (Exception ex)
+
+        IntPtr hProc = OpenProcess(PROCESS_ALL_ACCESS, false, processes[0].Id);
+        if (hProc == IntPtr.Zero)
         {
-            AddLog($"Exception in InjectDLL: {ex.Message}");
-            return false;
+            UpdateLog($"[-] OpenProcess failed! Error: {Marshal.GetLastWin32Error()}");
+            return;
         }
+
+        // 2. Используем LoadLibraryW для поддержки любых путей (включая кириллицу)
+        // Путь в Unicode занимает 2 байта на символ + null-terminator
+        byte[] pathBytes = Encoding.Unicode.GetBytes(fullPath + "\0");
+        IntPtr mem = VirtualAllocEx(hProc, IntPtr.Zero, (uint)pathBytes.Length, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+
+        if (WriteProcessMemory(hProc, mem, pathBytes, (uint)pathBytes.Length, out _))
+        {
+            // Берем LoadLibraryW (Unicode версия)
+            IntPtr loadLibAddr = GetProcAddress(GetModuleHandleW("kernel32.dll"), "LoadLibraryW");
+            IntPtr hThread = CreateRemoteThread(hProc, IntPtr.Zero, 0, loadLibAddr, mem, 0, IntPtr.Zero);
+
+            if (hThread != IntPtr.Zero)
+            {
+                UpdateLog("[+] Remote thread created. Waiting...");
+                System.Threading.Thread.Sleep(2000); // Даем время на загрузку
+
+                uint exitCode;
+                GetExitCodeThread(hThread, out exitCode);
+
+                if (exitCode == 0)
+                {
+                    UpdateLog("[-] LoadLibraryW returned NULL (0x0). Injection failed.");
+                    UpdateLog("[!] Check if DLL is x86 and has all dependencies (/MT).");
+                }
+                else
+                {
+                    UpdateLog($"[+] Success! DLL Loaded at 0x{exitCode:X}");
+                }
+                CloseHandle(hThread);
+            }
+        }
+        CloseHandle(hProc);
     }
 
-    private void AddLog(string message)
-    {
-        var logText = this.FindControl<TextBlock>("LogText");
-        if (logText != null)
-        {
-            logText.Text = $"[{DateTime.Now:HH:mm:ss}] {message}\n{logText.Text}";
-        }
-    }
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    static extern bool VirtualFreeEx(IntPtr hProcess, IntPtr lpAddress, uint dwSize, uint dwFreeType);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    static extern bool CloseHandle(IntPtr hObject);
+    private void UpdateLog(string msg) => Dispatcher.UIThread.InvokeAsync(() => {
+        var log = this.FindControl<TextBlock>("LogText");
+        if (log != null) log.Text = $"[{DateTime.Now:HH:mm:ss}] {msg}\n{log.Text}";
+    });
 }
