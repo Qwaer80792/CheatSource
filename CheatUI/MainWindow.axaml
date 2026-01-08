@@ -14,7 +14,7 @@
                    Margin="0,0,0,10"/>
 
 		<Button Name="InjectButton"
-                Content="ИНЖЕКТИРОВАТЬ"
+                Content="Inject"
                 Background="#3E3E3E"
                 Foreground="White"
                 HorizontalAlignment="Stretch"
