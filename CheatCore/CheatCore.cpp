@@ -2,14 +2,16 @@
 #include <d3d9.h>
 #include <d3dx9.h>
 #include <iostream>
-#include "imgui.h"
-#include "imgui_impl_dx9.h"
-#include "imgui_impl_win32.h"
-#include "MinHook.h"
 
-#pragma comment(lib, "d3d9.lib")
-#pragma comment(lib, "d3dx9.lib")
-#pragma comment(lib, "MinHook.x86.lib")
+#include "includes/imgui/imgui.h"
+#include "includes/imgui/imgui_impl_dx9.h"
+#include "includes/imgui/imgui_impl_win32.h"
+#include "includes/minhook/MinHook.h"
+
+#pragma comment(lib, "libs/directx/d3d9.lib")
+#pragma comment(lib, "libs/directx/d3dx9.lib")
+#pragma comment(lib, "libs/minhook/MinHook.x86.lib")
+
 
 // --- Типы функций ---
 typedef HRESULT(STDMETHODCALLTYPE* EndScene_t)(IDirect3DDevice9*);
@@ -26,32 +28,26 @@ bool init = false;
 bool show_menu = true;
 HWND game_hwnd = nullptr;
 
-// Для фильтрации CEF (фантомных окон)
 LONGLONG last_pc = 0;
 LONGLONG frequency = 0;
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
-// --- Хук на перемещение курсора игрой ---
 BOOL WINAPI Hooked_SetCursorPos(int X, int Y) {
-    // Если меню открыто, блокируем попытки игры центрировать мышь
     if (show_menu) return TRUE;
     return Original_SetCursorPos(X, Y);
 }
 
-// --- Обработка ввода (WndProc) ---
 LRESULT CALLBACK Hooked_WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     if (show_menu) {
         ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam);
 
-        // Блокируем ввод в игру, если мышь над меню
         ImGuiIO& io = ImGui::GetIO();
         if (io.WantCaptureMouse) return true;
     }
     return CallWindowProc(Original_WndProc, hWnd, msg, wParam, lParam);
 }
 
-// --- Хук Reset (для корректного сворачивания игры) ---
 HRESULT STDMETHODCALLTYPE Hooked_Reset(IDirect3DDevice9* pDevice, D3DPRESENT_PARAMETERS* pPresentationParameters) {
     if (init) ImGui_ImplDX9_InvalidateDeviceObjects();
     HRESULT hr = Original_Reset(pDevice, pPresentationParameters);
@@ -65,7 +61,6 @@ HRESULT STDMETHODCALLTYPE Hooked_EndScene(IDirect3DDevice9* pDevice) {
     if (GetAsyncKeyState(VK_INSERT) & 1) {
         show_menu = !show_menu;
 
-        // Показываем/скрываем системный курсор
         if (show_menu) {
             ClipCursor(NULL);
             while (ShowCursor(TRUE) < 0);
@@ -75,7 +70,6 @@ HRESULT STDMETHODCALLTYPE Hooked_EndScene(IDirect3DDevice9* pDevice) {
         }
     }
 
-    // 2. Фильтрация CEF (чтобы не мигало и не двоилось)
     LARGE_INTEGER current_pc;
     QueryPerformanceCounter(&current_pc);
     if (frequency == 0) QueryPerformanceFrequency((LARGE_INTEGER*)&frequency);
@@ -83,7 +77,6 @@ HRESULT STDMETHODCALLTYPE Hooked_EndScene(IDirect3DDevice9* pDevice) {
     if (interval < 0.002) return Original_EndScene(pDevice);
     last_pc = current_pc.QuadPart;
 
-    // 3. Инициализация ImGui
     if (!init) {
         D3DDEVICE_CREATION_PARAMETERS cp;
         if (SUCCEEDED(pDevice->GetCreationParameters(&cp))) {
@@ -95,7 +88,7 @@ HRESULT STDMETHODCALLTYPE Hooked_EndScene(IDirect3DDevice9* pDevice) {
 
                 ImGuiIO& io = ImGui::GetIO();
                 io.IniFilename = nullptr;
-                io.MouseDrawCursor = true; // ImGui сам рисует курсор
+                io.MouseDrawCursor = true; 
 
                 Original_WndProc = (WNDPROC)SetWindowLongPtr(game_hwnd, GWLP_WNDPROC, (LONG_PTR)Hooked_WndProc);
                 init = true;
@@ -103,17 +96,13 @@ HRESULT STDMETHODCALLTYPE Hooked_EndScene(IDirect3DDevice9* pDevice) {
         }
     }
 
-    // 4. Отрисовка меню
     if (init && show_menu) {
         ImGui_ImplDX9_NewFrame();
         ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();
 
         ImGui::SetNextWindowSize(ImVec2(400, 300), ImGuiCond_FirstUseEver);
-        ImGui::Begin("Radmir Internal Final v3.5", &show_menu);
-
-        ImGui::Text("Status: Fully Unlocked");
-        ImGui::Separator();
+        ImGui::Begin("Radmir Internal Final v1.0", &show_menu);
 
         if (ImGui::CollapsingHeader("Player Hacks")) {
             static bool godmode = false;
@@ -124,7 +113,6 @@ HRESULT STDMETHODCALLTYPE Hooked_EndScene(IDirect3DDevice9* pDevice) {
         }
 
         if (ImGui::Button("Unload Cheat")) {
-            // Логика выгрузки (по желанию)
         }
 
         ImGui::End();
@@ -137,7 +125,6 @@ HRESULT STDMETHODCALLTYPE Hooked_EndScene(IDirect3DDevice9* pDevice) {
     return Original_EndScene(pDevice);
 }
 
-// --- Поиск VTable ---
 void* GetVTableFunction(int index) {
     IDirect3D9* pD3D = Direct3DCreate9(D3D_SDK_VERSION);
     D3DPRESENT_PARAMETERS d3dpp = { 0 };
@@ -160,12 +147,8 @@ DWORD WINAPI MainThread(LPVOID lpReserved) {
     while (!GetModuleHandleA("d3d9.dll")) Sleep(500);
 
     MH_Initialize();
-
-    // Хукаем DirectX
     MH_CreateHook(GetVTableFunction(42), &Hooked_EndScene, (LPVOID*)&Original_EndScene);
     MH_CreateHook(GetVTableFunction(16), &Hooked_Reset, (LPVOID*)&Original_Reset);
-
-    // Хукаем курсор (чтобы не центрировался)
     MH_CreateHookApi(L"user32.dll", "SetCursorPos", &Hooked_SetCursorPos, (LPVOID*)&Original_SetCursorPos);
 
     MH_EnableHook(MH_ALL_HOOKS);
