@@ -171,33 +171,33 @@ std::vector<samp::CVehicle*> GetVehicles()
     return vehicles;
 }
 
-bool WorldToScreen(const sampapi::CVector& worldPos, sampapi::CVector& screenPos)
+bool WorldToScreen(const sampapi::CVector& worldPos, ImVec2& screenPos)
 {
-    // Берем матрицу по твоему адресу 0xB6FA28
-    float* dwModelViewPtr = (float*)0xB6FA28;
+    float fX, fY, fW, fH;
+    typedef bool(__cdecl* CalcScreenCoors_t)(const sampapi::CVector&, sampapi::CVector*, float*, float*, bool, bool);
+    static CalcScreenCoors_t CalcScreenCoors = (CalcScreenCoors_t)0x70CE30;
 
-    if (!dwModelViewPtr) return false;
+    sampapi::CVector out;
+    if (CalcScreenCoors(worldPos, &out, &fW, &fH, true, true))
+    {
+        screenPos.x = out.x;
+        screenPos.y = out.y;
+        return true;
+    }
+    return false;
+}
 
-    float screenWidth = ImGui::GetIO().DisplaySize.x;
-    float screenHeight = ImGui::GetIO().DisplaySize.y;
+void DrawESPLine(const sampapi::CVector& worldPos, ImU32 color, const char* name)
+{
+    ImVec2 screen;
+    if (WorldToScreen(worldPos, screen)) {
+        auto drawList = ImGui::GetBackgroundDrawList();
+        float sw = ImGui::GetIO().DisplaySize.x;
+        float sh = ImGui::GetIO().DisplaySize.y;
 
-    // Вычисляем W (коэффициент глубины)
-    float w = dwModelViewPtr[3] * worldPos.x + dwModelViewPtr[7] * worldPos.y + dwModelViewPtr[11] * worldPos.z + dwModelViewPtr[15];
-
-    // Если объект за спиной — не рисуем
-    if (w < 0.1f) return false;
-
-    float invW = 1.0f / w;
-
-    // Рассчитываем нормализованные координаты (от -1 до 1)
-    float x = (dwModelViewPtr[0] * worldPos.x + dwModelViewPtr[4] * worldPos.y + dwModelViewPtr[8] * worldPos.z + dwModelViewPtr[12]) * invW;
-    float y = (dwModelViewPtr[1] * worldPos.x + dwModelViewPtr[5] * worldPos.y + dwModelViewPtr[9] * worldPos.z + dwModelViewPtr[13]) * invW;
-
-    // Переводим в экранные пиксели с учетом разрешения
-    screenPos.x = (screenWidth / 2.0f) + (x * screenWidth / 2.0f);
-    screenPos.y = (screenHeight / 2.0f) - (y * screenHeight / 2.0f);
-
-    return true;
+        drawList->AddLine(ImVec2(sw / 2, sh), screen, color);
+        if (name) drawList->AddText(screen, IM_COL32(255, 255, 255, 255), name);
+    }
 }
 
 void DrawVehicleESP(samp::CVehicle* vehicle, int screenWidth, int screenHeight)
@@ -208,82 +208,73 @@ void DrawVehicleESP(samp::CVehicle* vehicle, int screenWidth, int screenHeight)
     vehicle->GetMatrix(&vehMatrix);
     sampapi::CVector worldPos = vehMatrix.pos;
 
-    sampapi::CVector screenPos;
+    ImVec2 screenPos;
     if (WorldToScreen(worldPos, screenPos))
     {
-        auto pNetGame = samp::RefNetGame();
-        if (!pNetGame || !pNetGame->m_pPools || !pNetGame->m_pPools->m_pVehicle) return;
-
-        auto pVehiclePool = pNetGame->m_pPools->m_pVehicle;
-
         int vehicleId = -1;
-        for (int i = 0; i < samp::CVehiclePool::MAX_VEHICLES; i++)
-        {
-            if (pVehiclePool->m_pObject[i] && pVehiclePool->m_pObject[i]->m_pGameVehicle == vehicle->m_pGameVehicle)
-            {
-                vehicleId = i;
-                break;
-            }
-        }
-
-        if (vehicleId != -1)
-        {
-            char modelStr[64];
-            int modelId = vehicle->GetModelIndex();
-            sprintf(modelStr, "[ID: %d] Model: %d", vehicleId, modelId);
-
-            ImVec2 textSize = ImGui::CalcTextSize(modelStr);
-            ImGui::GetBackgroundDrawList()->AddText(
-                ImVec2(screenPos.x - textSize.x / 2.0f, screenPos.y),
-                IM_COL32(255, 255, 0, 255),
-                modelStr
-            );
-        }
-    }
-}
-
-void DrawPlayerESP(samp::CPed* player, int screenWidth, int screenHeight)
-{
-    if (!player || !player->m_pGamePed) return;
-
-    sampapi::CVector worldPos;
-    player->GetBonePosition(1, &worldPos);
-
-    sampapi::CVector screenPos;
-    if (WorldToScreen(worldPos, screenPos))
-    {
         auto pNetGame = samp::RefNetGame();
-        auto pPool = (pNetGame && pNetGame->m_pPools) ? pNetGame->m_pPools->m_pPlayer : nullptr;
-
-        if (espNames && pPool)
-        {
-            sampapi::ID nId = pPool->Find(player->m_pGamePed);
-            if (nId != -1)
-            {
-                const char* szName = pPool->GetName(nId);
-                if (szName)
-                {
-                    ImGui::GetBackgroundDrawList()->AddText(
-                        ImVec2(screenPos.x, screenPos.y - 40),
-                        IM_COL32(255, 255, 255, 255),
-                        szName
-                    );
+        if (pNetGame && pNetGame->m_pPools && pNetGame->m_pPools->m_pVehicle) {
+            auto pVehiclePool = pNetGame->m_pPools->m_pVehicle;
+            for (int i = 0; i < 2000; i++) {
+                if (pVehiclePool->m_pObject[i] && pVehiclePool->m_pObject[i]->m_pGameVehicle == vehicle->m_pGameVehicle) {
+                    vehicleId = i;
+                    break;
                 }
             }
         }
 
-        if (espHealthArmor)
-        {
-            float health = player->GetHealth();
-            float armor = player->GetArmour();
+        auto drawList = ImGui::GetBackgroundDrawList();
 
-            float healthWidth = 50.0f * (fminf(health, 100.0f) / 100.0f);
-            ImGui::GetBackgroundDrawList()->AddRectFilled(
-                ImVec2(screenPos.x - 25, screenPos.y + 10),
-                ImVec2(screenPos.x - 25 + healthWidth, screenPos.y + 15),
-                IM_COL32(0, 255, 0, 255)
-            );
+        char buf[32];
+        sprintf(buf, "Veh ID: %d", vehicleId);
+        drawList->AddText(screenPos, IM_COL32(0, 255, 255, 255), buf);
+
+        drawList->AddLine(ImVec2(screenWidth / 2.0f, (float)screenHeight), screenPos, IM_COL32(0, 255, 255, 150));
+    }
+}
+
+void DrawPlayerESP(sampapi::v037r3::CPed* player, int screenWidth, int screenHeight)
+{
+    if (!player || !player->m_pGamePed) return;
+
+    sampapi::CVector headPos;
+    player->GetBonePosition(8, &headPos);
+
+    headPos.z += 0.2f;
+
+    ImVec2 screenPos;
+    if (WorldToScreen(headPos, screenPos))
+    {
+        auto drawList = ImGui::GetBackgroundDrawList();
+
+        const char* szName = "Player";
+        auto pNetGame = sampapi::v037r3::RefNetGame();
+        if (pNetGame && pNetGame->m_pPools && pNetGame->m_pPools->m_pPlayer)
+        {
+            sampapi::ID nId = pNetGame->m_pPools->m_pPlayer->Find(player->m_pGamePed);
+            if (nId != -1) szName = pNetGame->m_pPools->m_pPlayer->GetName(nId);
         }
+
+        float health = *(float*)((DWORD)player->m_pGamePed + 0x540);
+
+        drawList->AddLine(
+            ImVec2((float)screenWidth / 2.0f, (float)screenHeight),
+            screenPos,
+            IM_COL32(255, 255, 0, 120)
+        );
+
+        ImVec2 textSize = ImGui::CalcTextSize(szName);
+        ImVec2 textPos = ImVec2(screenPos.x - (textSize.x / 2.0f), screenPos.y - 15.0f);
+        drawList->AddText(textPos, IM_COL32(255, 255, 255, 255), szName);
+
+        float barWidth = 35.0f;
+        float healthRatio = (health > 100.0f ? 100.0f : (health < 0.0f ? 0.0f : health)) / 100.0f;
+
+        ImVec2 barPos = ImVec2(screenPos.x - barWidth / 2.0f, screenPos.y - 2.0f);
+
+        drawList->AddRectFilled(barPos, ImVec2(barPos.x + barWidth, barPos.y + 4), IM_COL32(0, 0, 0, 200));
+
+        drawList->AddRectFilled(barPos, ImVec2(barPos.x + (barWidth * healthRatio), barPos.y + 4), IM_COL32(0, 255, 0, 255));
     }
 }
 
@@ -310,15 +301,15 @@ void Aimbot(samp::CPed* localPlayer, std::vector<samp::CPed*>& players)
         if (!player || player->IsDead()) continue;
 
         sampapi::CVector headPos;
-        player->GetBonePosition(8, &headPos);
+        player->GetBonePosition(8, &headPos); 
 
-        sampapi::CVector screenPos;
+        ImVec2 screenPos;
         if (WorldToScreen(headPos, screenPos))
         {
             float centerX = ImGui::GetIO().DisplaySize.x / 2.0f;
             float centerY = ImGui::GetIO().DisplaySize.y / 2.0f;
 
-            float fovDist = sqrt(pow(screenPos.x - centerX, 2) + pow(screenPos.y - centerY, 2));
+            float fovDist = sqrtf(powf(screenPos.x - centerX, 2) + powf(screenPos.y - centerY, 2));
 
             if (fovDist < closestFov)
             {
@@ -338,7 +329,7 @@ void Aimbot(samp::CPed* localPlayer, std::vector<samp::CPed*>& players)
         direction.y = targetHeadPos.y - aimData.source.y;
         direction.z = targetHeadPos.z - aimData.source.z;
 
-        float length = sqrt(direction.x * direction.x + direction.y * direction.y + direction.z * direction.z);
+        float length = sqrtf(direction.x * direction.x + direction.y * direction.y + direction.z * direction.z);
         if (length > 0.0f)
         {
             direction.x /= length;
@@ -347,6 +338,7 @@ void Aimbot(samp::CPed* localPlayer, std::vector<samp::CPed*>& players)
         }
 
         float smooth = 15.0f;
+
         aimData.front.x += (direction.x - aimData.front.x) / smooth;
         aimData.front.y += (direction.y - aimData.front.y) / smooth;
         aimData.front.z += (direction.z - aimData.front.z) / smooth;
@@ -505,28 +497,30 @@ void AutoShoot(samp::CPed* localPlayer, std::vector<samp::CPed*>& players, int s
         sampapi::CVector worldPos;
         player->GetBonePosition(3, &worldPos);
 
-        sampapi::CVector screenPos;
+        ImVec2 screenPos;
         if (WorldToScreen(worldPos, screenPos))
         {
             float centerX = screenWidth / 2.0f;
             float centerY = screenHeight / 2.0f;
 
-            float distanceToCenter = sqrt(pow(screenPos.x - centerX, 2) + pow(screenPos.y - centerY, 2));
+            float distanceToCenter = sqrtf(powf(screenPos.x - centerX, 2) + powf(screenPos.y - centerY, 2));
 
             if (distanceToCenter < 15.0f)
             {
-                if (currentTime - lastShotTime > 100)
+                if (currentTime - lastShotTime > 100) 
                 {
-                    INPUT input = { 0 };
-                    input.type = INPUT_MOUSE;
-                    input.mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
-                    SendInput(1, &input, sizeof(INPUT));
+                    INPUT input[2] = { 0 };
 
-                    input.mi.dwFlags = MOUSEEVENTF_LEFTUP;
-                    SendInput(1, &input, sizeof(INPUT));
+                    input[0].type = INPUT_MOUSE;
+                    input[0].mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
+
+                    input[1].type = INPUT_MOUSE;
+                    input[1].mi.dwFlags = MOUSEEVENTF_LEFTUP;
+
+                    SendInput(2, input, sizeof(INPUT));
 
                     lastShotTime = currentTime;
-                    break;
+                    break; 
                 }
             }
         }
