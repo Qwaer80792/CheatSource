@@ -1,11 +1,11 @@
-﻿#define IMGUI_DEFINE_MATH_OPERATORS
-#define _CRT_SECURE_NO_WARNINGS
-#define WIN32_LEAN_AND_MEAN
+﻿#define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #define NO_STRICT
 
 #include <windows.h>
+#include <objbase.h>
 
+#include <windows.h>
 #include <d3d9.h>
 #include <d3dx9.h>
 
@@ -18,45 +18,43 @@
 #include <algorithm>
 #include <string> 
 
+// ImGui
+#include "includes/imgui/imgui.h"
+#include "includes/imgui/imgui_impl_dx9.h"
+#include "includes/imgui/imgui_impl_win32.h"
 
-#include "Imgui/imgui.h"
-#include "Imgui/imgui_impl_dx9.h"
-#include "Imgui/imgui_impl_win32.h"
-#include "Imgui/imgui.cpp"
-#include "Imgui/imgui_draw.cpp"
-#include "Imgui/imgui_tables.cpp"
-#include "Imgui/imgui_widgets.cpp"
-#include "Imgui/imgui_impl_dx9.cpp"
-#include "Imgui/imgui_impl_win32.cpp"
+// MinHook
+#include "MinHook.h"
 
-
-#include "minhook/MinHook.h"
-#pragma comment(lib, "minhook/MinHook.x86.lib")
-
-
-#include <sampapi/sampapi.h>
+// SAMP-API (Версия R3-1) 
+/*
+#include <sampapi/sampapi.h> 
 #include <sampapi/CVector.h>
 #include <sampapi/CMatrix.h>
 #include <sampapi/0.3.7-R3-1/CNetGame.h>
 #include <sampapi/0.3.7-R3-1/CPlayerPool.h>
 #include <sampapi/0.3.7-R3-1/CRemotePlayer.h>
-#include <sampapi/0.3.7-R3-1/CPlayerInfo.h>
+#include <sampapi/0.3.7-R3-1/CPlayerInfo.h> 
 #include <sampapi/0.3.7-R3-1/CPed.h>
 #include <sampapi/0.3.7-R3-1/CVehiclePool.h>
 #include <sampapi/0.3.7-R3-1/CVehicle.h>
 #include <sampapi/0.3.7-R3-1/CCamera.h>
 #include <sampapi/0.3.7-R3-1/CGame.h>
 #include <sampapi/0.3.7-R3-1/AimStuff.h>
+*/
+
+extern LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 
 namespace samp = sampapi::v037r3;
 
 
+// --- Типы функций ---
 typedef HRESULT(STDMETHODCALLTYPE* EndScene_t)(IDirect3DDevice9*);
 typedef HRESULT(STDMETHODCALLTYPE* Reset_t)(IDirect3DDevice9*, D3DPRESENT_PARAMETERS*);
 typedef BOOL(WINAPI* SetCursorPos_t)(int, int);
 
-
+// --- Глобальные переменные ---
 EndScene_t Original_EndScene = nullptr;
 Reset_t Original_Reset = nullptr;
 WNDPROC Original_WndProc = nullptr;
@@ -66,7 +64,7 @@ bool init = false;
 bool show_menu = true;
 HWND game_hwnd = nullptr;
 
-
+// --- Переменные для функций ---
 bool espEnabled = true;
 bool espNames = true;
 bool espHealthArmor = true;
@@ -79,34 +77,33 @@ bool noRecoilEnabled = false;
 bool noSpreadEnabled = false;
 bool godModeEnabled = false;
 bool radarEnabled = false;
-float radarZoom = 100.0f; 
+float radarZoom = 100.0f; // Это будет масштаб
 bool speedHackEnabled = false;
 float speedMultiplier = 2.0f;
 bool vehicleEspEnabled = false;
 bool autoShootEnabled = false;
 bool autoShootKeyEnabled = true;
 
-
+// --- Хук на перемещение курсора игрой ---
 BOOL WINAPI Hooked_SetCursorPos(int X, int Y) {
     if (show_menu) return TRUE;
     return Original_SetCursorPos(X, Y);
 }
 
-extern LRESULT __cdecl ImGui_ImplWin32_WndProcHandler(void* hwnd, unsigned int msg, unsigned int wparam, long lparam);
-
+// --- Обработка ввода (WndProc) ---
 LRESULT CALLBACK Hooked_WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     if (show_menu) {
-        if (ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam))
-            return TRUE; 
 
+        if (ImGui_ImplWin32_WndProcHandler) {
+            ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam);
+        }
         ImGuiIO& io = ImGui::GetIO();
-        if (io.WantCaptureMouse || io.WantCaptureKeyboard)
-            return TRUE;
+        if (io.WantCaptureMouse) return true;
     }
-
-    return CallWindowProc((FARPROC)Original_WndProc, hWnd, msg, wParam, lParam);
+    return CallWindowProc(Original_WndProc, hWnd, msg, wParam, lParam);
 }
 
+// --- Хук Reset ---
 HRESULT STDMETHODCALLTYPE Hooked_Reset(IDirect3DDevice9* pDevice, D3DPRESENT_PARAMETERS* pPresentationParameters) {
     if (init) ImGui_ImplDX9_InvalidateDeviceObjects();
     HRESULT hr = Original_Reset(pDevice, pPresentationParameters);
@@ -238,14 +235,14 @@ void Aimbot(samp::CPed* localPlayer, std::vector<samp::CPed*>& players) {
         if (!player || player == localPlayer || player->IsDead()) continue;
 
         sampapi::CVector targetPos;
-        player->GetBonePosition(8, &targetPos);
+        player->GetBonePosition(8, &targetPos); 
 
         float dx = targetPos.x - localPos.x;
         float dy = targetPos.y - localPos.y;
         float dz = targetPos.z - localPos.z;
         float distance = std::sqrt(dx * dx + dy * dy + dz * dz);
 
-        if (distance < closestDistance && distance < aimbotRange) {
+        if (distance < closestDistance && distance < aimbotRange) { 
             closestDistance = distance;
             bestTarget = player;
         }
@@ -260,8 +257,8 @@ void Aimbot(samp::CPed* localPlayer, std::vector<samp::CPed*>& players) {
         float relZ = headPos.z - localPos.z;
         float dist2D = std::sqrt(relX * relX + relY * relY);
 
-        float yaw = std::atan2(relY, relX) - (3.14159265f / 2.0f);
-        float pitch = std::atan2(relZ, dist2D);
+        float yaw = std::atan2(relY, relX) - (3.14159265f / 2.0f); 
+        float pitch = std::atan2(relZ, dist2D); 
         *(float*)0xB6F258 = yaw;
         *(float*)0xB6F248 = pitch;
     }
@@ -335,7 +332,7 @@ void AutoShoot(samp::CPed* localPlayer, std::vector<samp::CPed*>& players, int s
             if (abs(screenPos.x - centerX) < 20 && abs(screenPos.y - centerY) < 20) {
                 mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
                 mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
-                break;
+                break; 
             }
         }
     }
@@ -348,14 +345,14 @@ void RapidFire() {
     if (!pGame || !pGame->m_pPlayerPed) return;
 
     int weaponId = pGame->m_pPlayerPed->GetCurrentWeapon();
-    if (weaponId < 16) return;
+    if (weaponId < 16) return; 
 
     void* pWeaponInfo = (void*)pGame->GetWeaponInfo(weaponId, 2);
 
     if (pWeaponInfo && (GetAsyncKeyState(VK_LBUTTON) & 0x8000)) {
 
         uintptr_t addr = reinterpret_cast<uintptr_t>(pWeaponInfo);
-        *(float*)(addr + 0x60) = 0.1f;
+        *(float*)(addr + 0x60) = 0.1f; 
     }
 }
 
@@ -398,7 +395,7 @@ void DrawRadar(samp::CPed* localPlayer, std::vector<samp::CPed*>& players, int s
     ImVec2 radarCenter = ImVec2(winPos.x + winSize.x / 2, winPos.y + winSize.y / 2);
 
     drawList->AddRectFilled(winPos, ImVec2(winPos.x + winSize.x, winPos.y + winSize.y), IM_COL32(30, 30, 30, 150));
-    drawList->AddCircleFilled(radarCenter, 4.0f, IM_COL32(0, 255, 0, 255)); 
+    drawList->AddCircleFilled(radarCenter, 4.0f, IM_COL32(0, 255, 0, 255)); // Мы
 
     sampapi::CMatrix localMat;
     localPlayer->GetMatrix(&localMat);
@@ -417,7 +414,7 @@ void DrawRadar(samp::CPed* localPlayer, std::vector<samp::CPed*>& players, int s
         float dy = targetPos.y - localPos.y;
         float dist = sqrt(dx * dx + dy * dy);
 
-        if (dist > radarZoom) continue;
+        if (dist > radarZoom) continue; 
 
         float relX = dx * cos(playerAngle) + dy * sin(playerAngle);
         float relY = dy * cos(playerAngle) - dx * sin(playerAngle);
@@ -454,7 +451,7 @@ void DrawVehicleESP(samp::CVehicle* vehicle, int screenWidth, int screenHeight) 
     }
 }
 
-
+// --- БЛОК ХУКА ОТРИСОВКИ ---
 HRESULT STDMETHODCALLTYPE Hooked_EndScene(IDirect3DDevice9* pDevice) {
     static bool init = false;
     sampapi::v037r3::CPed* localPlayer = nullptr;
@@ -549,73 +546,25 @@ HRESULT STDMETHODCALLTYPE Hooked_EndScene(IDirect3DDevice9* pDevice) {
             ImGui_ImplWin32_NewFrame();
             ImGui::NewFrame();
 
-            ImGui::SetNextWindowSize(ImVec2(550, 400), ImGuiCond_FirstUseEver);
+            ImGui::Begin("Radmir Internal Final v3.5", &show_menu);
 
-            ImGui::Begin("Radmir Internal Final v3.5", &show_menu, ImGuiWindowFlags_NoCollapse);
-
-            if (ImGui::BeginTabBar("MainTabs")) {
-
-                if (ImGui::BeginTabItem("Aimbot")) {
-                    ImGui::Checkbox("Enable Aimbot", &aimbotEnabled);
-                    ImGui::Checkbox("Right Click Activation", &aimbotKeyEnabled);
-                    ImGui::SliderFloat("Range", &aimbotRange, 10.0f, 300.0f, "%.0f m");
-                    ImGui::SliderFloat("FOV", &aimbotFovRadius, 10.0f, 800.0f, "%.0f");
-                    ImGui::Separator();
-                    ImGui::Checkbox("Rapid Fire", &rapidFireEnabled);
-                    ImGui::Checkbox("No Recoil", &noRecoilEnabled);
-                    ImGui::Checkbox("No Spread", &noSpreadEnabled);
-                    ImGui::EndTabItem();
-                }
-
-                if (ImGui::BeginTabItem("Visuals")) {
-                    ImGui::Checkbox("Player ESP", &espEnabled);
-                    ImGui::Checkbox("Show Names", &espNames);
-                    ImGui::Checkbox("Health/Armor Bars", &espHealthArmor);
-                    ImGui::Separator();
-                    ImGui::Checkbox("Vehicle ESP", &vehicleEspEnabled);
-                    ImGui::Checkbox("Radar Hack", &radarEnabled);
-                    ImGui::SliderFloat("Radar Zoom", &radarZoom, 50.0f, 500.0f, "%.0f");
-                    ImGui::EndTabItem();
-                }
-
-                if (ImGui::BeginTabItem("Player")) {
-                    ImGui::Checkbox("GodMode", &godModeEnabled);
-                    ImGui::Checkbox("SpeedHack (ALT)", &speedHackEnabled);
-                    ImGui::SliderFloat("Speed Multiplier", &speedMultiplier, 1.0f, 5.0f, "%.1f");
-                    ImGui::Separator();
-                    if (ImGui::Button("Heal Me", ImVec2(100, 25))) {
-                        if (localPlayer) localPlayer->SetHealth(100.0f);
-                    }
-                    ImGui::EndTabItem();
-                }
-
-                if (ImGui::BeginTabItem("Teleport")) {
-                    ImGui::Text("Online Players:");
-                    ImGui::BeginChild("TPChild", ImVec2(0, 0), true);
-                    if (pPlayerPool) {
-                        for (int i = 0; i < 1004; i++) {
-                            auto pRemotePlayer = pPlayerPool->GetPlayer(i);
-                            if (pRemotePlayer && pRemotePlayer->m_pPed) {
-                                std::string name = pPlayerPool->GetName(i);
-                                if (ImGui::Button(name.c_str(), ImVec2(-1, 20))) {
-                                    TeleportToPlayer((sampapi::v037r3::CPed*)pRemotePlayer->m_pPed);
-                                }
+            if (ImGui::CollapsingHeader("ESP")) {
+                ImGui::Checkbox("Enable ESP", &espEnabled);
+            }
+            if (ImGui::CollapsingHeader("Teleport")) {
+                if (pPlayerPool) {
+                    for (int i = 0; i < 1004; i++) {
+                        auto pInfo = pPlayerPool->m_pObject[i];
+                        if (pInfo && pInfo->m_pPlayer && pInfo->m_pPlayer->m_pPed) {
+                            if (ImGui::Button(pInfo->m_szNick.c_str())) {
+                                TeleportToPlayer((sampapi::v037r3::CPed*)pInfo->m_pPlayer->m_pPed);
                             }
                         }
                     }
-                    ImGui::EndChild();
-                    ImGui::EndTabItem();
                 }
-
-                ImGui::EndTabBar();
             }
 
-            ImGui::Separator();
-            if (ImGui::Button("Unload Cheat", ImVec2(-1, 30))) {
-                MH_DisableHook(MH_ALL_HOOKS);
-                show_menu = false;
-            }
-
+            if (ImGui::Button("Unload")) { /* Logic */ }
             ImGui::End();
             ImGui::Render();
             ImGui_ImplDX9_RenderDrawData(ImGui::GetDrawData());
@@ -628,6 +577,7 @@ HRESULT STDMETHODCALLTYPE Hooked_EndScene(IDirect3DDevice9* pDevice) {
     return Original_EndScene(pDevice);
 }
 
+// --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
 void* GetVTableFunction(int index) {
     IDirect3D9* pD3D = Direct3DCreate9(D3D_SDK_VERSION);
     D3DPRESENT_PARAMETERS d3dpp = { 0 };
