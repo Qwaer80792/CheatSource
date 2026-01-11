@@ -58,26 +58,40 @@ bool show_menu = true;
 HWND game_hwnd = nullptr;
 sampapi::CMatrix localMat;
 
+// --- [ ESP Settings ] ---
 bool espEnabled = true;
 bool espNames = true;
 bool espHealthArmor = true;
+bool vehicleEspEnabled = false;
+
+// --- [ Aimbot & Target Settings ] ---
 bool aimbotEnabled = false;
 bool aimbotKeyEnabled = true;
-float aimbotRange = 100.0f;
 float aimbotFovRadius = 150.0f;
-bool airBreakEnabled = false;
-bool firstActivation = true;
+float aimbotRange = 100.0f; 
+
+// --- [ Calibration (Offsets) ] ---
+float aimOffsetX = 40.0f;  
+float aimOffsetY = -45.0f; 
+
+// --- [ Weapon Hacks ] ---
+bool autoShootEnabled = false;
+bool autoShootKeyEnabled = true;
 bool rapidFireEnabled = false;
 bool noRecoilEnabled = false;
 bool noSpreadEnabled = false;
+bool noReloadEnabled = false;
+
+// --- [ Movement & GodMode ] ---
 bool godModeEnabled = false;
-bool radarEnabled = false;
-float radarZoom = 100.0f;
+bool airBreakEnabled = false;
+bool firstActivation = true;
 bool speedHackEnabled = false;
 float speedMultiplier = 2.0f;
-bool vehicleEspEnabled = false;
-bool autoShootEnabled = false;
-bool autoShootKeyEnabled = true;
+
+// --- [ Visuals & Radar ] ---
+bool radarEnabled = false;
+float radarZoom = 100.0f;
 
 BOOL WINAPI Hooked_SetCursorPos(int X, int Y)
 {
@@ -147,30 +161,6 @@ void RefreshPlayers(std::vector<samp::CPed*>& playersList)
     }
 }
 
-std::vector<samp::CVehicle*> GetVehicles()
-{
-    std::vector<samp::CVehicle*> vehicles;
-
-    auto netGame = samp::RefNetGame();
-    if (!netGame || !netGame->m_pPools) return vehicles;
-
-    auto vehiclePool = netGame->m_pPools->m_pVehicle;
-    if (!vehiclePool) return vehicles;
-
-    for (int i = 0; i < samp::CVehiclePool::MAX_VEHICLES; i++)
-    {
-        if (vehiclePool->m_pObject[i])
-        {
-            auto pVehicle = vehiclePool->m_pObject[i];
-            if (pVehicle)
-            {
-                vehicles.push_back(pVehicle);
-            }
-        }
-    }
-    return vehicles;
-}
-
 bool WorldToScreen(const sampapi::CVector& worldPos, ImVec2& screenPos)
 {
     float fX, fY, fW, fH;
@@ -200,36 +190,41 @@ void DrawESPLine(const sampapi::CVector& worldPos, ImU32 color, const char* name
     }
 }
 
-void DrawVehicleESP(samp::CVehicle* vehicle, int screenWidth, int screenHeight)
-{
-    if (!vehicle || !vehicle->m_pGameEntity) return;
+void DrawVehicleESP(int screenWidth, int screenHeight) {
+    auto pNetGame = sampapi::v037r3::RefNetGame();
+    if (!pNetGame || !pNetGame->m_pPools || !pNetGame->m_pPools->m_pVehicle) return;
 
-    sampapi::CMatrix vehMatrix;
-    vehicle->GetMatrix(&vehMatrix);
-    sampapi::CVector worldPos = vehMatrix.pos;
+    auto drawList = ImGui::GetBackgroundDrawList();
+    auto pVehiclePool = pNetGame->m_pPools->m_pVehicle;
 
-    ImVec2 screenPos;
-    if (WorldToScreen(worldPos, screenPos))
-    {
-        int vehicleId = -1;
-        auto pNetGame = samp::RefNetGame();
-        if (pNetGame && pNetGame->m_pPools && pNetGame->m_pPools->m_pVehicle) {
-            auto pVehiclePool = pNetGame->m_pPools->m_pVehicle;
-            for (int i = 0; i < 2000; i++) {
-                if (pVehiclePool->m_pObject[i] && pVehiclePool->m_pObject[i]->m_pGameVehicle == vehicle->m_pGameVehicle) {
-                    vehicleId = i;
-                    break;
-                }
-            }
+    for (int i = 0; i < 2000; i++) {
+        void* pSAMPVehicle = (void*)pVehiclePool->m_pObject[i];
+
+        if (!pSAMPVehicle) continue;
+        uintptr_t pGameVeh = *(uintptr_t*)((uintptr_t)pSAMPVehicle + 0x40);
+        if (!pGameVeh) continue;
+
+        uintptr_t pMatrix = *(uintptr_t*)(pGameVeh + 0x14);
+        if (!pMatrix) continue;
+
+        sampapi::CVector vehPos;
+        vehPos.x = *(float*)(pMatrix + 0x30);
+        vehPos.y = *(float*)(pMatrix + 0x34);
+        vehPos.z = *(float*)(pMatrix + 0x38);
+
+        vehPos.z += 1.0f;
+
+        ImVec2 screenPos;
+        if (WorldToScreen(vehPos, screenPos)) {
+            float health = *(float*)(pGameVeh + 0x4C0);
+
+            char szVehInfo[64];
+            sprintf(szVehInfo, "Veh ID: %d | HP: %.0f", i, health);
+
+            ImVec2 textSize = ImGui::CalcTextSize(szVehInfo);
+            drawList->AddText(ImVec2(screenPos.x - textSize.x / 2.0f, screenPos.y),
+                IM_COL32(0, 255, 255, 255), szVehInfo);
         }
-
-        auto drawList = ImGui::GetBackgroundDrawList();
-
-        char buf[32];
-        sprintf(buf, "Veh ID: %d", vehicleId);
-        drawList->AddText(screenPos, IM_COL32(0, 255, 255, 255), buf);
-
-        drawList->AddLine(ImVec2(screenWidth / 2.0f, (float)screenHeight), screenPos, IM_COL32(0, 255, 255, 150));
     }
 }
 
@@ -278,127 +273,59 @@ void DrawPlayerESP(sampapi::v037r3::CPed* player, int screenWidth, int screenHei
     }
 }
 
-void GetAngleToTarget(sampapi::CVector target, sampapi::CVector owner, float& yaw, float& pitch)
-{
-    sampapi::CVector diff = { target.x - owner.x, target.y - owner.y, target.z - owner.z };
-    float distance = sqrt(diff.x * diff.x + diff.y * diff.y);
+void DrawAimbotFov(int screenWidth, int screenHeight) {
+    float fovCenterX = (screenWidth / 2.0f) + aimOffsetX;
+    float fovCenterY = (screenHeight / 2.0f) + aimOffsetY;
 
-    yaw = atan2(diff.y, diff.x) - (3.14159265f / 2.0f);
-    pitch = atan2(diff.z, distance);
+    ImGui::GetBackgroundDrawList()->AddCircle(
+        ImVec2(fovCenterX, fovCenterY),
+        aimbotFovRadius,
+        ImColor(255, 255, 255, 255),
+        100
+    );
 }
 
-void Aimbot(samp::CPed* localPlayer, std::vector<samp::CPed*>& players)
+void Aimbot(samp::CPed* localPlayer, std::vector<samp::CPed*>& players, int screenWidth, int screenHeight)
 {
     if (!aimbotEnabled || !localPlayer) return;
     if (aimbotKeyEnabled && !(GetAsyncKeyState(VK_RBUTTON) & 0x8000)) return;
 
+    float crosshairX = (screenWidth / 2.0f) + aimOffsetX;
+    float crosshairY = (screenHeight / 2.0f) + aimOffsetY;
+
     float closestFov = aimbotFovRadius;
     samp::CPed* bestTarget = nullptr;
-    sampapi::CVector targetHeadPos;
+    ImVec2 targetScreenPos;
 
-    for (auto player : players)
-    {
+    for (auto player : players) {
         if (!player || player->IsDead()) continue;
-
-        sampapi::CVector headPos;
-        player->GetBonePosition(8, &headPos); 
+        sampapi::CVector bonePos;
+        player->GetBonePosition(3, &bonePos); 
 
         ImVec2 screenPos;
-        if (WorldToScreen(headPos, screenPos))
-        {
-            float centerX = ImGui::GetIO().DisplaySize.x / 2.0f;
-            float centerY = ImGui::GetIO().DisplaySize.y / 2.0f;
+        if (WorldToScreen(bonePos, screenPos)) {
+            float dx = screenPos.x - crosshairX;
+            float dy = screenPos.y - crosshairY;
+            float fovDist = sqrtf(dx * dx + dy * dy);
 
-            float fovDist = sqrtf(powf(screenPos.x - centerX, 2) + powf(screenPos.y - centerY, 2));
-
-            if (fovDist < closestFov)
-            {
+            if (fovDist < closestFov) {
                 closestFov = fovDist;
                 bestTarget = player;
-                targetHeadPos = headPos;
+                targetScreenPos = screenPos;
             }
         }
     }
 
-    if (bestTarget)
-    {
-        auto& aimData = samp::AimStuff::RefLocalPlayerAim();
+    if (bestTarget) {
+        float diffX = targetScreenPos.x - crosshairX;
+        float diffY = targetScreenPos.y - crosshairY;
 
-        sampapi::CVector direction;
-        direction.x = targetHeadPos.x - aimData.source.x;
-        direction.y = targetHeadPos.y - aimData.source.y;
-        direction.z = targetHeadPos.z - aimData.source.z;
+        float smooth = 2.5f;
 
-        float length = sqrtf(direction.x * direction.x + direction.y * direction.y + direction.z * direction.z);
-        if (length > 0.0f)
-        {
-            direction.x /= length;
-            direction.y /= length;
-            direction.z /= length;
-        }
-
-        float smooth = 15.0f;
-
-        aimData.front.x += (direction.x - aimData.front.x) / smooth;
-        aimData.front.y += (direction.y - aimData.front.y) / smooth;
-        aimData.front.z += (direction.z - aimData.front.z) / smooth;
+        mouse_event(MOUSEEVENTF_MOVE, (DWORD)(diffX / smooth), (DWORD)(diffY / smooth), 0, 0);
 
         samp::AimStuff::UpdateAim();
     }
-}
-
-void ApplyNoSpreadLib()
-{
-    if (!noSpreadEnabled) return;
-
-    samp::CGame* pGame = samp::RefGame();
-    if (!pGame || !pGame->m_pPlayerPed) return;
-
-    int weaponId = pGame->m_pPlayerPed->GetCurrentWeapon();
-    if (weaponId < 22) return;
-
-    auto pInfo = pGame->GetWeaponInfo(weaponId, 2);
-    if (pInfo)
-    {
-        float* pAccuracy = (float*)((uintptr_t)pInfo + 0x20);
-        float* pMoveSpeedAccuracy = (float*)((uintptr_t)pInfo + 0x24);
-
-        *pAccuracy = 100.0f;
-        *pMoveSpeedAccuracy = 100.0f;
-    }
-}
-
-void ProcessWeaponHacks()
-{
-    auto pGame = samp::RefGame();
-    if (!pGame || !pGame->m_pPlayerPed) return;
-
-    if (noRecoilEnabled || noSpreadEnabled)
-    {
-        samp::AimStuff::UpdateAim();
-        samp::AimStuff::ApplyAim();
-    }
-
-    int weaponId = pGame->m_pPlayerPed->GetCurrentWeapon();
-    if (weaponId >= 22)
-    {
-        auto pInfo = pGame->GetWeaponInfo(weaponId, 2);
-        if (pInfo)
-        {
-            if (noSpreadEnabled)
-            {
-                float* pAccuracy = (float*)((uintptr_t)pInfo + 0x20);
-                *pAccuracy = 100.0f;
-            }
-        }
-    }
-}
-
-void NoSpread()
-{
-    if (!noSpreadEnabled) return;
-    sampapi::v037r3::AimStuff::UpdateAim();
-    sampapi::v037r3::AimStuff::ApplyAim();
 }
 
 void AirBreak(samp::CPed* localPlayer)
@@ -484,74 +411,91 @@ void SpeedHack()
 void AutoShoot(samp::CPed* localPlayer, std::vector<samp::CPed*>& players, int screenWidth, int screenHeight)
 {
     if (!autoShootEnabled || !localPlayer) return;
-
     if (autoShootKeyEnabled && !(GetAsyncKeyState(VK_RBUTTON) & 0x8000)) return;
 
     static DWORD lastShotTime = 0;
     DWORD currentTime = GetTickCount();
+
+    float crosshairX = (screenWidth / 2.0f) + aimOffsetX;
+    float crosshairY = (screenHeight / 2.0f) + aimOffsetY;
 
     for (auto& player : players)
     {
         if (!player || player->IsDead()) continue;
 
         sampapi::CVector worldPos;
-        player->GetBonePosition(3, &worldPos);
+        player->GetBonePosition(3, &worldPos); 
 
         ImVec2 screenPos;
         if (WorldToScreen(worldPos, screenPos))
         {
-            float centerX = screenWidth / 2.0f;
-            float centerY = screenHeight / 2.0f;
+            float dist = sqrtf(powf(screenPos.x - crosshairX, 2) + powf(screenPos.y - crosshairY, 2));
 
-            float distanceToCenter = sqrtf(powf(screenPos.x - centerX, 2) + powf(screenPos.y - centerY, 2));
-
-            if (distanceToCenter < 15.0f)
+            if (dist < 15.0f)
             {
-                if (currentTime - lastShotTime > 100) 
+                if (currentTime - lastShotTime > 100)
                 {
-                    INPUT input[2] = { 0 };
-
-                    input[0].type = INPUT_MOUSE;
-                    input[0].mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
-
-                    input[1].type = INPUT_MOUSE;
-                    input[1].mi.dwFlags = MOUSEEVENTF_LEFTUP;
-
-                    SendInput(2, input, sizeof(INPUT));
-
+                    mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
+                    mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
                     lastShotTime = currentTime;
-                    break; 
+                    break;
                 }
             }
         }
     }
 }
 
-void RapidFire()
+void ApplyNoSpread() {
+    if (!noSpreadEnabled) return;
+
+    auto pGame = sampapi::v037r3::RefGame();
+    if (!pGame || !pGame->m_pPlayerPed) return;
+
+    auto pInfo = pGame->m_pPlayerPed->GetCurrentWeaponInfo();
+
+    if (pInfo) {
+        *(float*)((uintptr_t)pInfo + 0x20) = 100.0f;
+        *(float*)((uintptr_t)pInfo + 0x24) = 100.0f;
+    }
+}
+
+void ApplyRapidFire()
 {
     if (!rapidFireEnabled) return;
 
-    auto pGame = samp::RefGame();
+    auto pGame = sampapi::v037r3::RefGame();
+    if (!pGame || !pGame->m_pPlayerPed) return;
+
+    if (GetAsyncKeyState(VK_LBUTTON) & 0x8000)
+    {
+        uintptr_t pPed = (uintptr_t)pGame->m_pPlayerPed->m_pGamePed;
+        if (pPed)
+        {
+            *(DWORD*)(pPed + 0x560) = 0;
+        }
+    }
+}
+
+void ApplyNoReload() {
+    if (!noReloadEnabled) return;
+
+    auto pGame = sampapi::v037r3::RefGame();
     if (!pGame || !pGame->m_pPlayerPed) return;
 
     int weaponId = pGame->m_pPlayerPed->GetCurrentWeapon();
-    auto pInfo = pGame->GetWeaponInfo(weaponId, 2);
+    if (weaponId < 22) return;
 
-    if (pInfo)
-    {
-        *(float*)((uintptr_t)pInfo + 0x60) = 0.1f;
+    auto pWeapon = pGame->m_pPlayerPed->GetWeaponSlot(weaponId);
+
+    if (pWeapon) {
+        *(int*)((uintptr_t)pWeapon + 0x08) = 50;
     }
 }
 
 void ApplyNoRecoil()
 {
     if (!noRecoilEnabled) return;
-
-    if (GetAsyncKeyState(VK_LBUTTON) & 0x8000)
-    {
-        *(float*)0xB6EC14 = 0.0f;
-        *(float*)0xB6EC18 = 0.0f;
-    }
+    sampapi::v037r3::AimStuff::UpdateAim();
 }
 
 void TeleportToPlayer(samp::CPed* target)
@@ -648,16 +592,15 @@ HRESULT STDMETHODCALLTYPE Hooked_EndScene(IDirect3DDevice9* pDevice)
         }
     }
 
+    // 2. Клавиша меню
     if (GetAsyncKeyState(VK_INSERT) & 1)
     {
         show_menu = !show_menu;
-        if (show_menu)
-        {
+        if (show_menu) {
             ClipCursor(NULL);
             while (ShowCursor(TRUE) < 0);
         }
-        else
-        {
+        else {
             while (ShowCursor(FALSE) >= 0);
         }
     }
@@ -669,148 +612,114 @@ HRESULT STDMETHODCALLTYPE Hooked_EndScene(IDirect3DDevice9* pDevice)
     auto pNetGame = samp::RefNetGame();
     auto pGame = samp::RefGame();
     ImGuiIO& io = ImGui::GetIO();
-    int screenWidth = (int)io.DisplaySize.x;
-    int screenHeight = (int)io.DisplaySize.y;
+    int sw = (int)io.DisplaySize.x;
+    int sh = (int)io.DisplaySize.y;
 
     if (pNetGame && pNetGame->m_pPools)
     {
-        samp::CPed* localPlayer = (pGame && pGame->m_pPlayerPed) ? (samp::CPed*)pGame->m_pPlayerPed : nullptr;
-
-        std::vector<samp::CPed*> players;
-        std::vector<samp::CVehicle*> vehicles;
-
-        auto pPlayerPool = pNetGame->m_pPools->m_pPlayer;
-        if (pPlayerPool)
-        {
-            for (int i = 0; i < 1004; i++)
-            {
-                auto pRemotePlayer = pPlayerPool->GetPlayer(i);
-                if (pRemotePlayer && pRemotePlayer->m_pPed)
-                    players.push_back((samp::CPed*)pRemotePlayer->m_pPed);
-            }
+        samp::CPed* localPlayer = nullptr;
+        if (pNetGame->m_pPools->m_pPlayer && pNetGame->m_pPools->m_pPlayer->GetLocalPlayer()) {
+            auto pLocalObj = pNetGame->m_pPools->m_pPlayer->GetLocalPlayer()->m_pPed;
+            if (pLocalObj) localPlayer = (samp::CPed*)pLocalObj;
         }
 
-        auto pVehiclePool = pNetGame->m_pPools->m_pVehicle;
-        if (pVehiclePool)
-        {
-            for (int i = 0; i < 2000; i++)
-            {
-                auto pSAMPVehicle = pVehiclePool->m_pObject[i];
-                if (pSAMPVehicle && pSAMPVehicle->m_pGameVehicle)
-                    vehicles.push_back((samp::CVehicle*)pSAMPVehicle->m_pGameVehicle);
+        std::vector<samp::CPed*> players;
+        auto pPlayerPool = pNetGame->m_pPools->m_pPlayer;
+        if (pPlayerPool) {
+            for (int i = 0; i < 1004; i++) {
+                auto pRemote = pPlayerPool->GetPlayer(i);
+                if (pRemote && pRemote->m_pPed)
+                    players.push_back((samp::CPed*)pRemote->m_pPed);
             }
         }
 
         if (localPlayer)
         {
-            Aimbot(localPlayer, players);
+            if (aimbotEnabled) {
+                float drawX = (sw / 2.0f) + aimOffsetX;
+                float drawY = (sh / 2.0f) + aimOffsetY;
+
+                ImGui::GetBackgroundDrawList()->AddCircle(
+                    ImVec2(drawX, drawY), 
+                    aimbotFovRadius,
+                    IM_COL32(255, 255, 255, 100),
+                    64,
+                    1.0f
+                );
+            }
+
+            Aimbot(localPlayer, players, sw, sh);
             ApplyNoRecoil();
-            NoSpread();
+            ApplyNoSpread();
             GodMode();
             SpeedHack();
-            RapidFire();
-            AutoShoot(localPlayer, players, screenWidth, screenHeight);
+            ApplyRapidFire();
+            AutoShoot(localPlayer, players, sw, sh);
             AirBreak(localPlayer);
+
+            if (espEnabled) {
+                for (auto player : players) DrawPlayerESP(player, sw, sh);
+            }
+            if (vehicleEspEnabled) DrawVehicleESP(sw, sh);
+            if (radarEnabled) DrawRadar(localPlayer, players, sw, sh);
         }
+    }
 
-        if (espEnabled)
-            for (auto player : players) DrawPlayerESP(player, screenWidth, screenHeight);
+    if (show_menu)
+    {
+        io.MouseDrawCursor = true;
+        ImGui::SetNextWindowSize(ImVec2(550, 420), ImGuiCond_FirstUseEver);
 
-        if (vehicleEspEnabled)
-            for (auto vehicle : vehicles) DrawVehicleESP(vehicle, screenWidth, screenHeight);
+        if (ImGui::Begin("Radmir Internal", &show_menu, ImGuiWindowFlags_NoCollapse)) {
+            if (ImGui::BeginTabBar("MainTabs")) {
 
-        if (localPlayer && radarEnabled)
-            DrawRadar(localPlayer, players, screenWidth, screenHeight);
+                if (ImGui::BeginTabItem("Combat")) {
+                    ImGui::Checkbox("Enable Aimbot", &aimbotEnabled);
+                    ImGui::Checkbox("Use Activation Key (RMB)", &aimbotKeyEnabled);
+                    ImGui::SliderFloat("FOV Radius", &aimbotFovRadius, 10.0f, 500.0f);
 
-        if (show_menu)
-        {
-            io.MouseDrawCursor = true;
-            ImGui::SetNextWindowSize(ImVec2(550, 420), ImGuiCond_FirstUseEver);
-            ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
+                    ImGui::Separator();
+                    ImGui::Text("Crosshair Calibration:");
+                    ImGui::SliderFloat("Offset X", &aimOffsetX, -150.0f, 150.0f);
+                    ImGui::SliderFloat("Offset Y", &aimOffsetY, -150.0f, 150.0f);
 
-            ImGui::Begin("Radmir Internal Final v3.5", &show_menu, ImGuiWindowFlags_NoCollapse);
-
-            if (ImGui::CollapsingHeader("Debug Matrix"))
-            {
-                float* m = (float*)0xB6FA28;
-                ImGui::Text("Address: 0xB6FA28");
-                for (int i = 0; i < 4; i++) {
-                    ImGui::Text("%.2f | %.2f | %.2f | %.2f", m[i * 4], m[i * 4 + 1], m[i * 4 + 2], m[i * 4 + 3]);
+                    ImGui::Separator();
+                    ImGui::Checkbox("AutoShoot", &autoShootEnabled);
+                    ImGui::EndTabItem();
                 }
 
-                RECT rect;
-                GetClientRect(game_hwnd, &rect);
-                ImGui::Text("Window Size: %d x %d", rect.right, rect.bottom);
-            }
-
-            if (ImGui::BeginTabBar("MainTabs"))
-            {
-                if (ImGui::BeginTabItem("Aimbot"))
-                {
-                    ImGui::TextColored(ImVec4(1, 1, 0, 1), "Weapon Assistance");
-                    ImGui::Checkbox("Enable Aimbot", &aimbotEnabled);
-                    ImGui::Checkbox("Right Click Activation", &aimbotKeyEnabled);
-                    ImGui::SliderFloat("FOV Radius", &aimbotFovRadius, 10.0f, 800.0f, "%.0f");
-                    ImGui::Separator();
-                    ImGui::Checkbox("Rapid Fire", &rapidFireEnabled);
+                if (ImGui::BeginTabItem("Weapon")) {
                     ImGui::Checkbox("No Recoil", &noRecoilEnabled);
                     ImGui::Checkbox("No Spread", &noSpreadEnabled);
+                    ImGui::Checkbox("No Reload", &noReloadEnabled);
+                    ImGui::Checkbox("Rapid Fire", &rapidFireEnabled);
                     ImGui::EndTabItem();
                 }
 
-                if (ImGui::BeginTabItem("Visuals"))
-                {
+                if (ImGui::BeginTabItem("Visuals")) {
                     ImGui::Checkbox("Player ESP", &espEnabled);
-                    if (espEnabled) {
-                        ImGui::Indent();
-                        ImGui::Checkbox("Names", &espNames);
-                        ImGui::Checkbox("HP/Armor", &espHealthArmor);
-                        ImGui::Unindent();
-                    }
                     ImGui::Checkbox("Vehicle ESP", &vehicleEspEnabled);
-                    ImGui::Checkbox("Radar Hack", &radarEnabled);
+                    ImGui::Checkbox("Radar", &radarEnabled);
+                    if (radarEnabled) ImGui::SliderFloat("Radar Zoom", &radarZoom, 10.0f, 200.0f);
                     ImGui::EndTabItem();
                 }
 
-                if (ImGui::BeginTabItem("Player"))
-                {
-                    ImGui::Checkbox("GodMode", &godModeEnabled);
+                if (ImGui::BeginTabItem("Player")) {
                     ImGui::Checkbox("AirBreak", &airBreakEnabled);
-                    ImGui::Checkbox("SpeedHack", &speedHackEnabled);
-                    if (ImGui::Button("Full Heal & Armor", ImVec2(-1, 25)) && localPlayer) {
-                        localPlayer->SetHealth(100.0f);
-                        localPlayer->SetArmour(100.0f);
-                    }
+                    ImGui::Checkbox("GodMode", &godModeEnabled);
+                    ImGui::Separator();
+                    ImGui::Checkbox("SpeedHack (ALT)", &speedHackEnabled);
+                    ImGui::SliderFloat("Speed Multiplier", &speedMultiplier, 1.0f, 5.0f);
                     ImGui::EndTabItem();
                 }
 
-                if (ImGui::BeginTabItem("Teleport"))
-                {
-                    ImGui::BeginChild("TP_List");
-                    if (pPlayerPool) {
-                        for (int i = 0; i < 1004; i++) {
-                            auto pRemote = pPlayerPool->GetPlayer(i);
-                            if (pRemote && pRemote->m_pPed) {
-                                if (ImGui::Button(pPlayerPool->GetName(i), ImVec2(-1, 20)))
-                                    TeleportToPlayer((samp::CPed*)pRemote->m_pPed);
-                            }
-                        }
-                    }
-                    ImGui::EndChild();
-                    ImGui::EndTabItem();
-                }
                 ImGui::EndTabBar();
             }
-
-            ImGui::Separator();
-            if (ImGui::Button("EMERGENCY UNLOAD", ImVec2(-1, 30))) {
-                MH_DisableHook(MH_ALL_HOOKS);
-                show_menu = false;
-            }
-
-            ImGui::End();
-            ImGui::PopStyleVar();
         }
+        ImGui::End();
+    }
+    else {
+        io.MouseDrawCursor = false;
     }
 
     ImGui::EndFrame();
