@@ -41,6 +41,7 @@
 #include <sampapi/0.3.7-R3-1/CPlayerPool.h>
 #include <sampapi/0.3.7-R3-1/CRemotePlayer.h>
 #include <sampapi/0.3.7-R3-1/CPlayerInfo.h>
+#include <sampapi/0.3.7-R3-1/CLocalPlayer.h>
 #include <sampapi/0.3.7-R3-1/CPed.h>
 #include <sampapi/0.3.7-R3-1/CVehiclePool.h>
 #include <sampapi/0.3.7-R3-1/CVehicle.h>
@@ -109,6 +110,10 @@ bool airBreakEnabled = false;
 bool firstActivation = true;
 bool speedHackEnabled = false;
 float speedMultiplier = 2.0f;
+bool slapperEnabled = false;
+float slapperForce = 150.0f;
+float slapperRadius = 15.0f;
+int slapperLagInterval = 200;
 
 // Visuals & Radar
 bool radarEnabled = false;
@@ -844,6 +849,87 @@ private:
         }
     }
 
+    void ApplySlapper() {
+        if (!slapperEnabled) return;
+
+        auto pNetGame = samp::RefNetGame();
+        if (!pNetGame || !pNetGame->m_pPools || !pNetGame->m_pPools->m_pPlayer) return;
+
+        auto pPlayerPool = pNetGame->m_pPools->m_pPlayer;
+        auto pLocal = pPlayerPool->GetLocalPlayer();
+        if (!pLocal || !pLocal->m_pPed) return;
+
+        static DWORD phaseTimer = GetTickCount();
+        static bool modeStrike = true;
+        DWORD now = GetTickCount();
+
+        static sampapi::CVector backPos;
+
+        if (modeStrike) {
+            int targetId = -1;
+            float minDistance = slapperRadius;
+
+            backPos = pLocal->m_onfootData.m_position;
+
+            for (int i = 0; i <= pPlayerPool->m_nLargestId; i++) {
+                if (i == pPlayerPool->m_localInfo.m_nId) continue;
+                auto pRemotePlayer = pPlayerPool->GetPlayer(i);
+                if (!pRemotePlayer || !pRemotePlayer->m_pPed) continue;
+                float dist = pLocal->m_pPed->GetDistanceToEntity(pRemotePlayer->m_pPed);
+                if (dist < minDistance) { minDistance = dist; targetId = i; }
+            }
+
+            if (targetId != -1) {
+                auto pTarget = pPlayerPool->GetPlayer(targetId);
+                sampapi::CVector targetPos;
+                pTarget->m_pPed->GetBonePosition(1, &targetPos);
+
+                for (int i = 0; i < 6; i++) {
+                    sampapi::CVector syncPos = targetPos;
+                    syncPos.x += (float)((rand() % 100 - 50) / 50.0f);
+                    syncPos.y += (float)((rand() % 100 - 50) / 50.0f);
+                    syncPos.z += (float)(i * 0.1f);
+
+                    sampapi::CVector moveSpeed;
+                    moveSpeed.x = (rand() % 2 == 0 ? slapperForce : -slapperForce) * 1.5f;
+                    moveSpeed.y = (rand() % 2 == 0 ? slapperForce : -slapperForce) * 1.5f;
+                    moveSpeed.z = 120.0f;
+
+                    if (pLocal->m_nCurrentVehicle == 0xFFFF) {
+                        pLocal->m_onfootData.m_position = syncPos;
+                        pLocal->m_onfootData.m_speed = moveSpeed;
+                        pLocal->m_lastUpdate = 0;
+                        pLocal->SendOnfootData();
+                    }
+                    else {
+                        pLocal->m_incarData.m_position = syncPos;
+                        pLocal->m_incarData.m_speed = moveSpeed;
+                        pLocal->m_lastUpdate = 0;
+                        pLocal->SendIncarData();
+                    }
+                }
+            }
+
+            if (now - phaseTimer > 40) {
+                modeStrike = false;
+                phaseTimer = now;
+
+                pLocal->m_onfootData.m_position = backPos;
+                pLocal->m_onfootData.m_speed = { 0, 0, 0 };
+                pLocal->SendOnfootData();
+            }
+        }
+        else {
+            int dynamicLag = slapperLagInterval + (rand() % 150);
+
+            pLocal->m_lastUpdate = now + dynamicLag;
+            if (now - phaseTimer > (DWORD)dynamicLag) {
+                modeStrike = true;
+                phaseTimer = now;
+            }
+        }
+    }
+
     void GodMode() {
         static bool lastState = false;
         samp::CPed* localPlayer = GetLocalPlayer();
@@ -1004,6 +1090,45 @@ private:
     }
 
     // ============================================
+    // IMGUI STYLES 
+    // ============================================
+
+    void SetupImGuiStyle() {
+        auto& style = ImGui::GetStyle();
+        style.WindowRounding = 8.0f;
+        style.ChildRounding = 6.0f;
+        style.FrameRounding = 4.0f;
+        style.GrabRounding = 4.0f;
+        style.PopupRounding = 6.0f;
+        style.ScrollbarRounding = 4.0f;
+        style.FramePadding = ImVec2(5, 5);
+        style.ItemSpacing = ImVec2(8, 10);
+
+        ImVec4* colors = style.Colors;
+        colors[ImGuiCol_WindowBg] = ImVec4(0.06f, 0.06f, 0.06f, 0.94f);
+        colors[ImGuiCol_ChildBg] = ImVec4(0.08f, 0.08f, 0.08f, 0.50f);
+        colors[ImGuiCol_PopupBg] = ImVec4(0.08f, 0.08f, 0.08f, 0.94f);
+        colors[ImGuiCol_Border] = ImVec4(0.15f, 0.15f, 0.15f, 1.00f);
+        colors[ImGuiCol_FrameBg] = ImVec4(0.12f, 0.12f, 0.12f, 1.00f);
+        colors[ImGuiCol_FrameBgHovered] = ImVec4(0.18f, 0.18f, 0.18f, 1.00f);
+        colors[ImGuiCol_FrameBgActive] = ImVec4(0.24f, 0.24f, 0.24f, 1.00f);
+        colors[ImGuiCol_TitleBg] = ImVec4(0.04f, 0.04f, 0.04f, 1.00f);
+        colors[ImGuiCol_TitleBgActive] = ImVec4(0.04f, 0.04f, 0.04f, 1.00f);
+        colors[ImGuiCol_CheckMark] = ImVec4(0.20f, 0.60f, 1.00f, 1.00f);
+        colors[ImGuiCol_SliderGrab] = ImVec4(0.20f, 0.60f, 1.00f, 1.00f);
+        colors[ImGuiCol_SliderGrabActive] = ImVec4(0.30f, 0.70f, 1.00f, 1.00f);
+        colors[ImGuiCol_Button] = ImVec4(0.15f, 0.15f, 0.15f, 1.00f);
+        colors[ImGuiCol_ButtonHovered] = ImVec4(0.25f, 0.25f, 0.25f, 1.00f);
+        colors[ImGuiCol_ButtonActive] = ImVec4(0.20f, 0.60f, 1.00f, 1.00f);
+        colors[ImGuiCol_Header] = ImVec4(0.15f, 0.15f, 0.15f, 1.00f);
+        colors[ImGuiCol_HeaderHovered] = ImVec4(0.25f, 0.25f, 0.25f, 1.00f);
+        colors[ImGuiCol_HeaderActive] = ImVec4(0.20f, 0.60f, 1.00f, 1.00f);
+        colors[ImGuiCol_Tab] = ImVec4(0.08f, 0.08f, 0.08f, 1.00f);
+        colors[ImGuiCol_TabHovered] = ImVec4(0.20f, 0.60f, 1.00f, 0.80f);
+        colors[ImGuiCol_TabActive] = ImVec4(0.20f, 0.60f, 1.00f, 1.00f);
+    }
+
+    // ============================================
     // MAIN ENDSCENE HOOK
     // ============================================
     HRESULT STDMETHODCALLTYPE Hooked_EndScene(IDirect3DDevice9* pDevice) {
@@ -1102,6 +1227,7 @@ private:
                 GodMode();
                 SpeedHack();
                 AirBreak(localPlayer);
+                ApplySlapper();
 
                 TriggerBot(localPlayer, players, sw, sh);
 
@@ -1121,124 +1247,128 @@ private:
         stats.DrawStats();
         adminDetector.CleanupOldEntries();
 
+
+
         if (show_menu) {
-            io.MouseDrawCursor = true;
-            ImGui::SetNextWindowSize(ImVec2(650, 500), ImGuiCond_FirstUseEver);
+            SetupImGuiStyle(); 
+            ImGui::SetNextWindowSize(ImVec2(600, 450), ImGuiCond_FirstUseEver);
 
-            if (ImGui::Begin("Advanced SAMP Cheat", &show_menu, ImGuiWindowFlags_NoCollapse)) {
-                if (ImGui::BeginTabBar("MainTabs")) {
+            if (ImGui::Begin("SAMP INTERNAL CHEAT", &show_menu, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize)) {
 
+                if (ImGui::BeginTabBar("MainTabs", ImGuiTabBarFlags_None)) {
+
+                    // --- AIMBOT TAB ---
                     if (ImGui::BeginTabItem("Aimbot")) {
+                        ImGui::BeginChild("AimGeneral", ImVec2(0, 0), true);
+                        ImGui::TextColored(ImVec4(0.2f, 0.6f, 1.0f, 1.0f), "Main Settings");
                         ImGui::Checkbox("Enable Aimbot", &aimbotEnabled);
-                        ImGui::Checkbox("Require Key (RMB)", &aimbotKeyEnabled);
-                        ImGui::SliderFloat("FOV Radius", &aimbotFovRadius, 10.0f, 500.0f);
-                        ImGui::SliderFloat("Range", &aimbotRange, 10.0f, 200.0f);
-                        ImGui::SliderFloat("Smoothing", &aimbotSmooth, 1.0f, 10.0f);
+                        ImGui::SameLine(); ImGui::Checkbox("Require RMB", &aimbotKeyEnabled);
+
+                        ImGui::PushItemWidth(-140);
+                        ImGui::DragFloat("FOV Radius", &aimbotFovRadius, 1.0f, 10.0f, 500.0f, "%.1f");
+                        ImGui::DragFloat("Range", &aimbotRange, 1.0f, 10.0f, 200.0f, "%.1f");
+                        ImGui::DragFloat("Smoothing", &aimbotSmooth, 0.1f, 1.0f, 10.0f, "%.1f");
 
                         ImGui::Separator();
-                        ImGui::Text("Prediction:");
+                        ImGui::TextColored(ImVec4(0.2f, 0.6f, 1.0f, 1.0f), "Prediction & Safety");
                         ImGui::Checkbox("Enable Prediction", &aimbotPrediction);
-                        if (aimbotPrediction) {
-                            ImGui::SliderFloat("Prediction Time", &aimbotPredictionTime, 0.05f, 0.5f);
-                        }
+                        if (aimbotPrediction) ImGui::SliderFloat("Pred. Time", &aimbotPredictionTime, 0.05f, 0.5f);
+
+                        ImGui::SliderFloat("Reaction (ms)", &aimbotSafety.reactionTime, 0.0f, 500.0f, "%.0f");
+                        ImGui::Checkbox("Human Error", &aimbotSafety.addHumanError);
 
                         ImGui::Separator();
-                        ImGui::Text("Safety:");
-                        ImGui::SliderFloat("Reaction Time (ms)", &aimbotSafety.reactionTime, 0.0f, 500.0f);
-                        ImGui::SliderFloat("Max Speed", &aimbotSafety.maxSpeed, 1.0f, 20.0f);
-                        ImGui::Checkbox("Add Human Error", &aimbotSafety.addHumanError);
-                        if (aimbotSafety.addHumanError) {
-                            ImGui::SliderFloat("Error Amount", &aimbotSafety.errorAmount, 0.5f, 5.0f);
-                        }
-
-                        ImGui::Separator();
-                        ImGui::Text("Calibration:");
-                        ImGui::SliderFloat("Offset X", &aimOffsetX, -150.0f, 150.0f);
-                        ImGui::SliderFloat("Offset Y", &aimOffsetY, -150.0f, 150.0f);
-
+                        ImGui::TextDisabled("Calibration:");
+                        ImGui::DragFloat("Offset X", &aimOffsetX, 0.5f, -150.f, 150.f);
+                        ImGui::DragFloat("Offset Y", &aimOffsetY, 0.5f, -150.f, 150.f);
+                        ImGui::EndChild();
                         ImGui::EndTabItem();
                     }
 
+                    // --- WEAPON TAB ---
                     if (ImGui::BeginTabItem("Weapon")) {
+                        ImGui::BeginChild("WeaponSettings", ImVec2(0, 0), true);
+                        ImGui::Columns(2, "weapon_cols", false);
                         ImGui::Checkbox("No Recoil", &noRecoilEnabled);
                         ImGui::Checkbox("No Spread", &noSpreadEnabled);
+                        ImGui::NextColumn();
                         ImGui::Checkbox("No Reload", &noReloadEnabled);
                         ImGui::Checkbox("Rapid Fire", &rapidFireEnabled);
+                        ImGui::Columns(1);
 
                         ImGui::Separator();
-                        ImGui::Text("TriggerBot:");
-                        ImGui::Checkbox("Enable TriggerBot", &triggerBotEnabled);
-                        if (triggerBotEnabled) {
-                            ImGui::SliderFloat("Trigger Delay (ms)", &triggerDelay, 0.0f, 200.0f);
-                        }
-
+                        ImGui::TextColored(ImVec4(0.2f, 0.6f, 1.0f, 1.0f), "TriggerBot");
+                        ImGui::Checkbox("Enable Trigger", &triggerBotEnabled);
+                        if (triggerBotEnabled) ImGui::SliderFloat("Delay (ms)", &triggerDelay, 0.0f, 200.0f);
+                        ImGui::EndChild();
                         ImGui::EndTabItem();
                     }
 
-                    if (ImGui::BeginTabItem("ESP")) {
-                        ImGui::Checkbox("Enable ESP", &espEnabled);
+                    // --- ESP TAB ---
+                    if (ImGui::BeginTabItem("Visuals")) {
+                        ImGui::BeginChild("ESPSettings", ImVec2(0, 0), true);
+                        ImGui::Checkbox("Enable Master ESP", &espEnabled);
+                        ImGui::Separator();
+
+                        ImGui::Columns(2, "esp_cols", false);
                         ImGui::Checkbox("Names", &espNames);
                         ImGui::Checkbox("Health/Armor", &espHealthArmor);
+                        ImGui::Checkbox("Box 2D", &espBox);
+                        ImGui::Checkbox("Skeleton", &espSkeleton);
+                        ImGui::NextColumn();
                         ImGui::Checkbox("Lines", &espLines);
                         ImGui::Checkbox("Distance", &espDistance);
                         ImGui::Checkbox("Weapon", &espWeapon);
-                        ImGui::Checkbox("Skeleton", &espSkeleton);
-                        ImGui::Checkbox("Box", &espBox);
                         ImGui::Checkbox("Vehicle ESP", &vehicleEspEnabled);
+                        ImGui::Columns(1);
 
                         ImGui::Separator();
-                        ImGui::Text("Safety Settings:");
-                        ImGui::Checkbox("Only In Range", &espSettings.onlyInRange);
-                        if (espSettings.onlyInRange) {
-                            ImGui::SliderFloat("Max Distance", &espSettings.maxDistance, 10.0f, 200.0f);
-                        }
-                        ImGui::Checkbox("Hide in Different Interior", &espSettings.hideInInterior);
+                        ImGui::TextColored(ImVec4(0.2f, 0.6f, 1.0f, 1.0f), "Filters");
                         ImGui::Checkbox("Hide Admins", &espSettings.hideAdmins);
-
+                        ImGui::Checkbox("Interior Check", &espSettings.hideInInterior);
+                        ImGui::EndChild();
                         ImGui::EndTabItem();
                     }
 
+                    // --- MOVEMENT TAB ---
                     if (ImGui::BeginTabItem("Movement")) {
+                        ImGui::BeginChild("MoveSettings", ImVec2(0, 0), true);
                         ImGui::Checkbox("God Mode", &godModeEnabled);
-                        ImGui::Checkbox("Air Break (WASD + Space/Ctrl)", &airBreakEnabled);
+                        ImGui::Checkbox("Air Break", &airBreakEnabled);
+
+                        ImGui::Separator();
+                        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "Exploits");
                         ImGui::Checkbox("Speed Hack (ALT)", &speedHackEnabled);
-                        if (speedHackEnabled) {
-                            ImGui::SliderFloat("Speed Multiplier", &speedMultiplier, 1.0f, 5.0f);
+                        if (speedHackEnabled) ImGui::SliderFloat("Multiplier", &speedMultiplier, 1.0f, 5.0f);
+
+                        ImGui::Checkbox("SLAPPER (Extreme)", &slapperEnabled);
+                        if (slapperEnabled) {
+                            ImGui::Indent();
+                            ImGui::DragFloat("Slap Force", &slapperForce, 1.0f, 10.0f, 1000.0f);
+                            ImGui::DragFloat("Magnet Radius", &slapperRadius, 0.5f, 5.0f, 100.0f);
+                            ImGui::DragInt("Lag Phase (ms)", &slapperLagInterval, 5, 50, 1000);
+                            ImGui::Unindent();
                         }
+                        ImGui::EndChild();
                         ImGui::EndTabItem();
                     }
 
-                    if (ImGui::BeginTabItem("Visuals")) {
-                        ImGui::Checkbox("Radar", &radarEnabled);
-                        if (radarEnabled) {
-                            ImGui::SliderFloat("Radar Zoom", &radarZoom, 10.0f, 300.0f);
-                        }
-
-                        ImGui::Separator();
-                        ImGui::Checkbox("Custom Crosshair", &customCrosshairEnabled);
-                        if (customCrosshairEnabled) {
-                            const char* styles[] = { "Cross", "Dot", "Circle", "T-Shape" };
-                            ImGui::Combo("Style", &crosshairStyle, styles, IM_ARRAYSIZE(styles));
-                            ImGui::ColorEdit4("Color", (float*)&crosshairColor);
-                            ImGui::SliderFloat("Size", &crosshairSize, 5.0f, 30.0f);
-                        }
-
-                        ImGui::EndTabItem();
-                    }
-
+                    // --- MISC TAB ---
                     if (ImGui::BeginTabItem("Misc")) {
-                        ImGui::Checkbox("Show Statistics", &stats.showStats);
-                        ImGui::Checkbox("Show Admin Warnings", &adminDetector.showWarnings);
+                        ImGui::BeginChild("MiscSettings", ImVec2(0, 0), true);
+                        ImGui::Checkbox("Show Stats Overlay", &stats.showStats);
+                        ImGui::Checkbox("Admin Warnings", &adminDetector.showWarnings);
 
-                        ImGui::Separator();
-                        ImGui::Text("Panic Mode: END key");
-                        ImGui::TextColored(ImVec4(1, 0, 0, 1), "Disables all features instantly!");
-
-                        if (ImGui::Button("Reset Statistics")) {
+                        ImGui::Spacing();
+                        if (ImGui::Button("Reset All Session Data", ImVec2(-1, 30))) {
                             stats = Statistics();
                             stats.Start();
                         }
 
+                        ImGui::Separator();
+                        ImGui::TextColored(ImVec4(1, 0, 0, 1), "Panic Key: [END]");
+                        ImGui::TextWrapped("Pressing END will immediately disable all active features and close the menu.");
+                        ImGui::EndChild();
                         ImGui::EndTabItem();
                     }
 
