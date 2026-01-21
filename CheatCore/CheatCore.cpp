@@ -70,10 +70,10 @@ sampapi::CMatrix localMat;
 // ============================================
 
 // ESP Settings
-bool espEnabled = true;
-bool espNames = true;
-bool espHealthArmor = true;
-bool espLines = true;
+bool espEnabled = false;
+bool espNames = false;
+bool espHealthArmor = false;
+bool espLines = false;
 bool espDistance = false;
 bool espWeapon = false;
 bool espSkeleton = false;
@@ -96,7 +96,7 @@ float aimOffsetY = -45.0f;
 
 // Weapon Hacks
 bool autoShootEnabled = false;
-bool autoShootKeyEnabled = true;
+bool autoShootKeyEnabled = false;
 bool rapidFireEnabled = false;
 bool noRecoilEnabled = false;
 bool noSpreadEnabled = false;
@@ -1341,7 +1341,7 @@ private:
                         ImGui::Checkbox("Speed Hack (ALT)", &speedHackEnabled);
                         if (speedHackEnabled) ImGui::SliderFloat("Multiplier", &speedMultiplier, 1.0f, 5.0f);
 
-                        ImGui::Checkbox("SLAPPER (Extreme)", &slapperEnabled);
+                        ImGui::Checkbox("SLAPPER", &slapperEnabled);
                         if (slapperEnabled) {
                             ImGui::Indent();
                             ImGui::DragFloat("Slap Force", &slapperForce, 1.0f, 10.0f, 1000.0f);
