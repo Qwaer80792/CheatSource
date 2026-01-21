@@ -61,7 +61,7 @@ WNDPROC Original_WndProc = nullptr;
 SetCursorPos_t Original_SetCursorPos = nullptr;
 
 bool init = false;
-bool show_menu = true;
+bool show_menu = false;
 HWND game_hwnd = nullptr;
 sampapi::CMatrix localMat;
 
