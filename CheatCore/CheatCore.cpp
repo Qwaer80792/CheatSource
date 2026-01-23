@@ -863,20 +863,20 @@ private:
         static bool modeStrike = true;
         DWORD now = GetTickCount();
 
-        static sampapi::CVector backPos;
-
         if (modeStrike) {
             int targetId = -1;
             float minDistance = slapperRadius;
-
-            backPos = pLocal->m_onfootData.m_position;
 
             for (int i = 0; i <= pPlayerPool->m_nLargestId; i++) {
                 if (i == pPlayerPool->m_localInfo.m_nId) continue;
                 auto pRemotePlayer = pPlayerPool->GetPlayer(i);
                 if (!pRemotePlayer || !pRemotePlayer->m_pPed) continue;
+
                 float dist = pLocal->m_pPed->GetDistanceToEntity(pRemotePlayer->m_pPed);
-                if (dist < minDistance) { minDistance = dist; targetId = i; }
+                if (dist < minDistance) {
+                    minDistance = dist;
+                    targetId = i;
+                }
             }
 
             if (targetId != -1) {
@@ -884,21 +884,21 @@ private:
                 sampapi::CVector targetPos;
                 pTarget->m_pPed->GetBonePosition(1, &targetPos);
 
-                for (int i = 0; i < 6; i++) {
+                for (int i = 0; i < 15; i++) {
                     sampapi::CVector syncPos = targetPos;
-                    syncPos.x += (float)((rand() % 100 - 50) / 50.0f);
-                    syncPos.y += (float)((rand() % 100 - 50) / 50.0f);
-                    syncPos.z += (float)(i * 0.1f);
+                    syncPos.x += (float)((rand() % 100 - 50) / 100.0f);
+                    syncPos.y += (float)((rand() % 100 - 50) / 100.0f);
+                    syncPos.z += (float)(i * 0.05f); 
 
                     sampapi::CVector moveSpeed;
-                    moveSpeed.x = (rand() % 2 == 0 ? slapperForce : -slapperForce) * 1.5f;
-                    moveSpeed.y = (rand() % 2 == 0 ? slapperForce : -slapperForce) * 1.5f;
-                    moveSpeed.z = 120.0f;
+                    moveSpeed.x = (rand() % 2 == 0 ? slapperForce : -slapperForce);
+                    moveSpeed.y = (rand() % 2 == 0 ? slapperForce : -slapperForce);
+                    moveSpeed.z = 100.0f;
 
                     if (pLocal->m_nCurrentVehicle == 0xFFFF) {
                         pLocal->m_onfootData.m_position = syncPos;
                         pLocal->m_onfootData.m_speed = moveSpeed;
-                        pLocal->m_lastUpdate = 0;
+                        pLocal->m_lastUpdate = 0; 
                         pLocal->SendOnfootData();
                     }
                     else {
@@ -910,20 +910,16 @@ private:
                 }
             }
 
-            if (now - phaseTimer > 40) {
+            if (now - phaseTimer > 100) {
                 modeStrike = false;
                 phaseTimer = now;
-
-                pLocal->m_onfootData.m_position = backPos;
-                pLocal->m_onfootData.m_speed = { 0, 0, 0 };
-                pLocal->SendOnfootData();
             }
         }
         else {
-            int dynamicLag = slapperLagInterval + (rand() % 150);
+            pLocal->m_lastUpdate = now + slapperLagInterval;
+            pLocal->m_lastAnyUpdate = now + slapperLagInterval;
 
-            pLocal->m_lastUpdate = now + dynamicLag;
-            if (now - phaseTimer > (DWORD)dynamicLag) {
+            if (now - phaseTimer > (DWORD)slapperLagInterval) {
                 modeStrike = true;
                 phaseTimer = now;
             }
